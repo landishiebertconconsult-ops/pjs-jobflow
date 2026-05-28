@@ -1,4 +1,5 @@
-import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { supabase } from "./lib/supabase";
 import * as XLSX from "xlsx";
 import { BarChart3, BriefcaseBusiness, CalendarClock, CheckSquare, ClipboardCheck, ClipboardList, FileText, LayoutDashboard, LogOut, PackageCheck, Plus, Search, Settings, ShieldCheck, Timer, Trash2, Users } from "lucide-react";
 
@@ -126,6 +127,15 @@ type DailyReport = {
   pointsAwarded: number;
   pictures: string[];
   pictureUploads?: JobDocumentUpload[];
+};
+
+type SupabaseProfile = {
+  id: string;
+  email: string;
+  full_name: string;
+  role: Role;
+  points?: number | null;
+  active?: boolean | null;
 };
 
 const usersSeed: User[] = [
@@ -364,6 +374,33 @@ export default function App() {
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [passwordSetupUserId, setPasswordSetupUserId] = useState<number | null>(null);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      const email = data.session?.user?.email?.toLowerCase();
+      if (!email) return;
+      const existingUser = users.find((user) => (user.email || "").toLowerCase() === email);
+      if (existingUser) {
+        setCurrentUserId(existingUser.id);
+        setIsLoggedIn(true);
+      }
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      const email = session?.user?.email?.toLowerCase();
+      if (!email) {
+        setIsLoggedIn(false);
+        return;
+      }
+      const existingUser = users.find((user) => (user.email || "").toLowerCase() === email);
+      if (existingUser) {
+        setCurrentUserId(existingUser.id);
+        setIsLoggedIn(true);
+      }
+    });
+
+    return () => listener.subscription.unsubscribe();
+  }, [users]);
   const [showSettings, setShowSettings] = useState(false);
   const [showAddJob, setShowAddJob] = useState(false);
 
@@ -564,29 +601,61 @@ export default function App() {
             loginPassword={loginPassword}
             setLoginPassword={setLoginPassword}
             loginError={loginError}
-            onLogin={() => {
+            onLogin={async () => {
               const normalizedEmail = loginEmail.trim().toLowerCase();
-              const loginUser = users.find((user) => (user.email || "").toLowerCase() === normalizedEmail);
-              if (!loginUser) {
-                setLoginError("No account found for that email address.");
+              setLoginError("");
+
+              const { data, error } = await supabase.auth.signInWithPassword({
+                email: normalizedEmail,
+                password: loginPassword,
+              });
+
+              if (error || !data.user) {
+                setLoginError(error?.message || "Unable to sign in. Check your email and password.");
                 return;
               }
-              if (loginUser.active === false) {
+
+              const { data: profile, error: profileError } = await supabase
+                .from("profiles")
+                .select("id,email,full_name,role,points,active")
+                .eq("email", normalizedEmail)
+                .maybeSingle<SupabaseProfile>();
+
+              if (profileError) {
+                setLoginError(`Signed in, but the profile could not be loaded: ${profileError.message}`);
+                await supabase.auth.signOut();
+                return;
+              }
+
+              if (!profile) {
+                setLoginError("Signed in, but no app profile exists for this email yet. Add this user to the profiles table first.");
+                await supabase.auth.signOut();
+                return;
+              }
+
+              if (profile.active === false) {
                 setLoginError("This account is inactive. Contact Admin/PM to reactivate it.");
+                await supabase.auth.signOut();
                 return;
               }
-              if ((loginUser.password || "") !== loginPassword) {
-                if (!(loginUser.role === "Admin" && loginPassword === "admin")) {
-                  setLoginError("Incorrect password. For the prototype, Admin password is admin. Crew/Foreman temporary password is temp123.");
-                  return;
-                }
+
+              let appUser = users.find((user) => (user.email || "").toLowerCase() === normalizedEmail);
+
+              if (!appUser) {
+                appUser = {
+                  id: Date.now(),
+                  name: profile.full_name,
+                  role: profile.role,
+                  points: profile.points || 0,
+                  monthlyPointLimit: profile.role === "Foreman" ? 25 : 0,
+                  email: profile.email,
+                  active: true,
+                  mustSetPassword: false,
+                };
+                setUsers((existingUsers) => [...existingUsers, appUser as User]);
               }
-              if (loginUser.mustSetPassword) {
-                setPasswordSetupUserId(loginUser.id);
-                setLoginError("");
-                return;
-              }
-              setCurrentUserId(loginUser.id);
+
+              setCurrentUserId(appUser.id);
               setIsLoggedIn(true);
               setLoginPassword("");
               setLoginError("");
@@ -694,12 +763,12 @@ function LoginPage({ loginEmail, setLoginEmail, loginPassword, setLoginPassword,
         </Field>
 
         <Field label="Password">
-          <input style={styles.input} type="password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} placeholder="Prototype password field" onKeyDown={(event) => { if (event.key === "Enter") onLogin(); }} />
+          <input style={styles.input} type="password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} placeholder="Enter your password" onKeyDown={(event) => { if (event.key === "Enter") onLogin(); }} />
         </Field>
 
         {loginError && <div style={styles.loginError}>{loginError}</div>}
         <button style={styles.loginButton} onClick={onLogin}>Sign In</button>
-        <p style={styles.loginNote}>Prototype login: Admin password is <strong>admin</strong>. Crew/Foreman temporary password is <strong>temp123</strong>, then they set their own password on first login. Online version should connect this to Supabase Auth.</p>
+        <p style={styles.loginNote}>Use the email and password created in Supabase Authentication. Admin/PM can create additional employees next.</p>
       </div>
     </div>
   );
@@ -766,7 +835,7 @@ function Sidebar({ activeView, setActiveView, user, isAdmin, onAddJob, onOpenSet
             {user.role === "Crew" && <b>{user.points} pts</b>}
           </div>
         </div>
-        <button style={styles.signOut} onClick={onSignOut}><LogOut size={16} /> Sign Out</button>
+        <button style={styles.signOut} onClick={async () => { await supabase.auth.signOut(); onSignOut(); }}><LogOut size={16} /> Sign Out</button>
       </div>
     </aside>
   );
