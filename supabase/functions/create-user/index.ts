@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "@supabase/supabase-js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -42,18 +42,18 @@ serve(async (req) => {
 
     const cleanEmail = String(email).trim().toLowerCase();
 
-    const roleMap: Record<string, string> = {
-      Admin: "admin",
-      "Project Manager": "project_manager",
-      Foreman: "foreman",
-      Crew: "crew",
-      admin: "admin",
-      project_manager: "project_manager",
-      foreman: "foreman",
-      crew: "crew",
-    };
+  const roleMap: Record<string, string> = {
+  Admin: "Admin",
+  "Project Manager": "Project Manager",
+  Foreman: "Foreman",
+  Crew: "Crew",
+  admin: "Admin",
+  project_manager: "Project Manager",
+  foreman: "Foreman",
+  crew: "Crew",
+};
 
-    const cleanRole = roleMap[String(role)] || "crew";
+const cleanRole = roleMap[String(role)] || roleMap[String(role).toLowerCase()] || "Crew";
 
     const { data: authData, error: authError } =
       await adminClient.auth.admin.createUser({
