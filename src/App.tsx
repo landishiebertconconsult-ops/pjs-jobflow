@@ -15,8 +15,25 @@ async function createUserInSupabase(input: {
     body: input,
   });
 
-  if (error) throw new Error(error.message);
-  if (!data?.success) throw new Error(data?.error || "User could not be created.");
+  if (error) {
+    let message = error.message;
+
+    try {
+      const context = (error as any).context;
+      if (context?.json) {
+        const errorBody = await context.json();
+        message = errorBody?.error || errorBody?.message || message;
+      }
+    } catch {
+      // keep original message
+    }
+
+    throw new Error(message);
+  }
+
+  if (!data?.success) {
+    throw new Error(data?.error || "User could not be created.");
+  }
 
   return data.user;
 }
