@@ -365,6 +365,37 @@ function mapSupabaseJob(job: any): Job {
     inspections: [],
   };
 }
+
+function makeEmptyJob(): Job {
+  return {
+    id: "empty",
+    jobNumber: "",
+    name: "No job selected",
+    customer: "",
+    location: "",
+    status: "Planning",
+    certainty: "",
+    phase: "Planning",
+    risk: "Green",
+    startDate: "",
+    finishDate: "",
+    nextAction: "",
+    actionOwner: "",
+    actionDue: "",
+    progress: 0,
+    allowedHours: 0,
+    usedHours: 0,
+    labourBudget: 0,
+    labourCostToDate: 0,
+    budget: 0,
+    costToDate: 0,
+    crewIds: [],
+    crewTasks: [],
+    projectTasks: pmTaskList(0),
+    pmRequests: [],
+    inspections: [],
+  };
+}
 const currency = (n: number) => `$${Math.round(n).toLocaleString()}`;
 const budgetUsedPctForJob = (job: Job) => pct(job.costToDate, job.budget);
 const budgetLeftPctForJob = (job: Job) => Math.max(0, 100 - budgetUsedPctForJob(job));
@@ -486,10 +517,15 @@ export default function App() {
       .sort((a, b) => budgetPriorityRank(a) - budgetPriorityRank(b) || budgetLeftPctForJob(a) - budgetLeftPctForJob(b));
   }, [jobs, isAdmin, currentUser.id, search]);
 
-  const selectedJob = visibleJobs.find((job) => job.id === selectedId) || visibleJobs[0] || jobs[0];
+  const selectedJob =
+    visibleJobs.find((job) => job.id === selectedId) ||
+    visibleJobs[0] ||
+    jobs[0] ||
+    null;
+  const selectedJobForViews = selectedJob || makeEmptyJob();
   const selectedCrew = selectedJob ? users.filter((u) => selectedJob.crewIds.includes(u.id)) : [];
 
-async function updateJob(update: Partial<Job>) {
+  async function updateJob(update: Partial<Job>) {
     if (!selectedJob) return;
 
     setJobs((all) => all.map((job) => (job.id === selectedJob.id ? { ...job, ...update } : job)));
@@ -516,6 +552,7 @@ async function updateJob(update: Partial<Job>) {
   }
 
   function toggleTask(type: "crewTasks" | "projectTasks" | "pmRequests", id: number) {
+    if (!selectedJob) return;
     setJobs((all) =>
       all.map((job) =>
         job.id === selectedJob.id
@@ -526,6 +563,7 @@ async function updateJob(update: Partial<Job>) {
   }
 
   function updateInspection(inspectionId: number, status: string) {
+    if (!selectedJob) return;
     setJobs((all) =>
       all.map((job) =>
         job.id === selectedJob.id
@@ -542,7 +580,7 @@ async function updateJob(update: Partial<Job>) {
       if (awarded + amount > currentUser.monthlyPointLimit) return;
     }
     setUsers((all) => all.map((u) => (u.id === userId ? { ...u, points: u.points + amount } : u)));
-    setPoints((all) => [{ id: Date.now(), userId, awardedById: currentUser.id, points: amount, reason, date: new Date().toISOString().slice(0, 10), jobName: jobNameOverride || selectedJob.name }, ...all]);
+    setPoints((all) => [{ id: Date.now(), userId, awardedById: currentUser.id, points: amount, reason, date: new Date().toISOString().slice(0, 10), jobName: jobNameOverride || selectedJob?.name || "General" }, ...all]);
   }
 
   function deductPoints(userId: number, amount: number, reason: string) {
@@ -600,7 +638,7 @@ async function updateJob(update: Partial<Job>) {
       return [reportPayload, ...all];
     });
 
-    const uploadsForJobFile = finalPictureUploads.length
+    const uploadsForJobFile: JobDocumentUpload[] = finalPictureUploads.length
       ? finalPictureUploads
       : finalPictures.map((fileName) => ({ fileName, type: "Photo" as const }));
 
@@ -671,7 +709,7 @@ async function deleteJob(jobId: string | number) {
     });
   }
 
-  if (isLoggedIn && !selectedJob && activeView !== "settings") {
+  if (isLoggedIn && !selectedJob && activeView === "dashboard") {
     return (
       <div id="jobflow-app" style={styles.app}>
         <MobileCrewStyles />
@@ -844,11 +882,11 @@ async function deleteJob(jobId: string | number) {
         {activeView === "planning" && <PlanningView isAdmin={isAdmin} jobs={jobs} visibleJobs={visibleJobs} potentialJobs={potentialJobs} setPotentialJobs={setPotentialJobs} users={users} />}
         {activeView === "reports" && <ReportsView isAdmin={isAdmin} jobs={visibleJobs} />}
         {activeView === "crewTasks" && <CrewTasksView jobs={visibleJobs} currentUser={currentUser} toggleCrewTaskForJob={toggleCrewTaskForJob} addCrewTaskForJob={addCrewTaskForJob} submitDailyReport={submitDailyReport} dailyReports={dailyReports} />}
-        {activeView === "crewPoints" && <CrewPoints users={users} setUsers={setUsers} jobs={jobs} points={points} currentUser={currentUser} selectedJob={selectedJob} awardPoints={awardPoints} deductPoints={deductPoints} isAdmin={isAdmin} isForeman={isForeman} />}
+        {activeView === "crewPoints" && <CrewPoints users={users} setUsers={setUsers} jobs={jobs} points={points} currentUser={currentUser} selectedJob={selectedJobForViews} awardPoints={awardPoints} deductPoints={deductPoints} isAdmin={isAdmin} isForeman={isForeman} />}
         {activeView === "potentialJobs" && <PotentialJobsPage isAdmin={isAdmin} currentUser={currentUser} potentialJobs={potentialJobs} setPotentialJobs={setPotentialJobs} />}
         {activeView === "calendar" && <CalendarView jobs={visibleJobs} potentialJobs={potentialJobs} isAdmin={isAdmin} />}
         {activeView === "smallJobs" && <SmallJobsPage isAdmin={isAdmin} smallJobs={smallJobs} setSmallJobs={setSmallJobs} />}
-        {activeView === "inspections" && <InspectionsView jobs={visibleJobs} selectedJob={selectedJob} setSelectedId={setSelectedId} updateInspection={updateInspection} isAdmin={isAdmin} />}
+        {activeView === "inspections" && <InspectionsView jobs={visibleJobs} selectedJob={selectedJobForViews} setSelectedId={setSelectedId} updateInspection={updateInspection} isAdmin={isAdmin} />}
         {activeView === "timeTracking" && <TimeTrackingView isAdmin={isAdmin} jobs={visibleJobs} currentUser={currentUser} />}
         {activeView === "labourTracking" && <LabourTrackingView isAdmin={isAdmin} jobs={visibleJobs} />}
       </main>
@@ -987,6 +1025,12 @@ function Sidebar({ activeView, setActiveView, user, isAdmin, onAddJob, onOpenSet
       <div style={styles.logo}>PJ&apos;S<br />ELECTRIC</div>
       <h2 style={styles.sidebarTitle}>PJ&apos;S ELECTRIC</h2>
       <SideButton active={activeView === "dashboard"} icon={<LayoutDashboard size={18} />} label="Jobs" onClick={() => setActiveView("dashboard")} />
+      <SideButton active={activeView === "planning"} icon={<BriefcaseBusiness size={18} />} label="Planning" onClick={() => setActiveView("planning")} />
+      <SideButton active={activeView === "reports"} icon={<FileText size={18} />} label="Reports" onClick={() => setActiveView("reports")} />
+      <SideButton active={activeView === "crewTasks"} icon={<CheckSquare size={18} />} label="Crew Tasks" onClick={() => setActiveView("crewTasks")} />
+      <SideButton active={activeView === "inspections"} icon={<ClipboardCheck size={18} />} label="Inspections" onClick={() => setActiveView("inspections")} />
+      <SideButton active={activeView === "timeTracking"} icon={<Timer size={18} />} label="Time Tracking" onClick={() => setActiveView("timeTracking")} />
+      <SideButton active={activeView === "labourTracking"} icon={<BarChart3 size={18} />} label="Labour Tracking" onClick={() => setActiveView("labourTracking")} />
       <SideButton active={activeView === "calendar"} icon={<CalendarClock size={18} />} label="Calendar" onClick={() => setActiveView("calendar")} />
       {isAdmin && <SideButton active={activeView === "smallJobs"} icon={<ClipboardList size={18} />} label="Jobs To Do" onClick={() => setActiveView("smallJobs")} />}
       {isAdmin && <SideButton icon={<Plus size={18} />} label="Add Job" onClick={onAddJob} />}
@@ -1032,34 +1076,6 @@ function Header({ currentUser, onOpenSettings }: { currentUser: User; onOpenSett
 function DashboardView({ jobs, selectedJob, selectedCrew, search, setSearch, setSelectedId, updateJob, deleteJob, toggleTask, updateInspection, isAdmin, currentUser, dailyReports, submitDailyReport, documents, uploadJobDocuments, potentialJobs, setPotentialJobs }: { jobs: Job[]; selectedJob: Job; selectedCrew: User[]; search: string; setSearch: (value: string) => void; setSelectedId: (id: string | number) => void; updateJob: (update: Partial<Job>) => void; deleteJob: (jobId: string | number) => void; toggleTask: (type: "crewTasks" | "projectTasks" | "pmRequests", id: number) => void; updateInspection: (id: number, status: string) => void; isAdmin: boolean; currentUser: User; dailyReports: DailyReport[]; submitDailyReport: (jobId: string | number, note: string, pictures?: string[], pictureUploads?: JobDocumentUpload[]) => void; documents: JobDocument[]; uploadJobDocuments: (jobId: string | number, uploads: JobDocumentUpload[]) => void; potentialJobs: PotentialJob[]; setPotentialJobs: (jobs: PotentialJob[]) => void }) {
   const [jobOpen, setJobOpen] = useState(false);
   const [activeFolder, setActiveFolder] = useState<JobFolder>("crewTasks");
-  const [showPotentialForm, setShowPotentialForm] = useState(false);
-  const [potentialForm, setPotentialForm] = useState({ name: "", customer: "", location: "", startDate: new Date().toISOString().slice(0, 10), finishDate: new Date().toISOString().slice(0, 10), estimatedHours: 0, assumedValue: 0, probability: "Medium" });
-
-  function addPotentialJob() {
-    if (!potentialForm.name.trim()) return;
-    setPotentialJobs([
-      {
-        id: Date.now(),
-        name: potentialForm.name.trim(),
-        customer: potentialForm.customer || "TBD",
-        location: potentialForm.location || "TBD",
-        probability: potentialForm.probability,
-        startDate: potentialForm.startDate,
-        finishDate: potentialForm.finishDate,
-        crewNeeded: 0,
-        estimatedHours: potentialForm.estimatedHours,
-        assumedValue: potentialForm.assumedValue,
-        crewIds: [],
-        document: "",
-        documents: [],
-        activityLog: [{ id: Date.now() + 99, date: new Date().toISOString().slice(0, 10), user: "System", field: "Original Entry", previousValue: "—", newValue: "Initial potential job created" }],
-      },
-      ...potentialJobs,
-    ]);
-    setPotentialForm({ name: "", customer: "", location: "", startDate: new Date().toISOString().slice(0, 10), finishDate: new Date().toISOString().slice(0, 10), estimatedHours: 0, assumedValue: 0, probability: "Medium" });
-    setShowPotentialForm(false);
-  }
-
   if (!jobOpen) {
     return (
       <div style={styles.cleanStack}>
@@ -1205,7 +1221,7 @@ function JobFolderContent({ job, activeFolder, isAdmin, updateJob, updateInspect
       const data = await file.arrayBuffer();
       const workbook = XLSX.read(data, { type: "array", cellDates: false });
       const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json<any[]>(firstSheet, { header: 1, defval: null });
+      const rows = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: null }) as any[][];
 
       if (knowifyUploadType === "Time Report") {
         const totalRow = rows.find((row) => String(row?.[0] || "").toLowerCase().trim() === "total");
@@ -1432,7 +1448,7 @@ function JobFolderContent({ job, activeFolder, isAdmin, updateJob, updateInspect
                 (event.target as HTMLInputElement).value = "";
               }}
               onChange={(event) => {
-                const files = Array.from(event.target.files || []);
+                const files = Array.from(event.currentTarget.files || []) as File[];
                 setDocumentFiles(files.map((file) => ({
                   fileName: file.name,
                   type: "Photo" as const,
@@ -1504,7 +1520,7 @@ function JobFolderContent({ job, activeFolder, isAdmin, updateJob, updateInspect
                   (event.target as HTMLInputElement).value = "";
                 }}
                 onChange={(event) => {
-                  const files = Array.from(event.target.files || []);
+                  const files = Array.from(event.currentTarget.files || []) as File[];
                   setDocumentFiles(files.map((file) => ({
                     fileName: file.name,
                     type: "Document" as const,
@@ -1595,7 +1611,7 @@ function JobFolderContent({ job, activeFolder, isAdmin, updateJob, updateInspect
               <strong>Drag and drop Knowify file here</strong>
               <span>or click to select Excel / CSV / PDF report files</span>
               <input style={styles.hiddenFileInput} type="file" multiple accept=".xlsx,.xls,.csv,.pdf" onChange={(event) => {
-                const files = Array.from(event.target.files || []);
+                const files = Array.from(event.currentTarget.files || []) as File[];
                 setKnowifyFiles(files.map((file) => file.name));
                 if (files[0]) parseKnowifyFile(files[0]);
               }} />
@@ -1648,7 +1664,7 @@ function JobFolderContent({ job, activeFolder, isAdmin, updateJob, updateInspect
                 (event.target as HTMLInputElement).value = "";
               }}
               onChange={(event) => {
-                const files = Array.from(event.target.files || []);
+                const files = Array.from(event.currentTarget.files || []) as File[];
                 const uploads = files.map((file) => ({
                   fileName: file.name,
                   type: "Photo" as const,
@@ -1797,7 +1813,7 @@ function AdminJobEdit({ job, updateJob }: { job: Job; updateJob: (update: Partia
 
 function SmallJobsPage({ isAdmin, smallJobs, setSmallJobs }: { isAdmin: boolean; smallJobs: SmallJob[]; setSmallJobs: (jobs: SmallJob[]) => void }) {
   const today = new Date().toISOString().slice(0, 10);
-  const emptyForm = { title: "", location: "", estimatedDays: 1, estimatedCrew: 1, priority: "Medium" as const, scope: "", documents: [] as JobDocumentUpload[], status: "Planning" as const, enteredDate: today, scheduled: false };
+  const emptyForm: Omit<SmallJob, "id"> = { title: "", location: "", estimatedDays: 1, estimatedCrew: 1, priority: "Medium", scope: "", documents: [], status: "Planning", enteredDate: today, scheduled: false };
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [selectedSmallJobId, setSelectedSmallJobId] = useState<number | null>(smallJobs[0]?.id || null);
@@ -1916,7 +1932,7 @@ function SmallJobsPage({ isAdmin, smallJobs, setSmallJobs }: { isAdmin: boolean;
               <strong>Attach drawings or documents</strong>
               <span>PDFs, photos, screenshots, sketches, etc.</span>
               <input style={styles.hiddenFileInput} type="file" multiple onChange={(event) => {
-                const files = Array.from(event.target.files || []);
+                const files = Array.from(event.currentTarget.files || []) as File[];
                 setForm({
                   ...form,
                   documents: [
@@ -2218,7 +2234,7 @@ function PotentialJobsPage({ isAdmin, currentUser, potentialJobs, setPotentialJo
               <strong>Drag/drop or click to attach drawings/documents</strong>
               <span>PDF, Excel, images, or tender documents</span>
               <input style={styles.hiddenFileInput} type="file" multiple onChange={(event) => {
-                const files = Array.from(event.target.files || []);
+                const files = Array.from(event.currentTarget.files || []) as File[];
                 setForm({
                   ...form,
                   documents: [
@@ -2720,10 +2736,10 @@ function ModuleCard({ title, icon, items }: { title: string; icon: ReactNode; it
 
 function PageTitle({ title, subtitle }: { title: string; subtitle: string }) { return <Card><h2 style={styles.cardTitle}>{title}</h2><p style={styles.muted}>{subtitle}</p></Card>; }
 function SideButton({ icon, label, active, onClick }: { icon: ReactNode; label: string; active?: boolean; onClick: () => void }) { return <button style={active ? styles.sideActive : styles.sideButton} onClick={onClick}>{icon}<span>{label}</span></button>; }
-function Card({ children, style }: { children: ReactNode; style?: CSSProperties }) { return <div style={{ ...styles.card, ...style }}>{children}</div>; }
-function Field({ label, children }: { label: string; children: ReactNode }) { return <label style={styles.field}><span>{label}</span>{children}</label>; }
+function Card({ children, style }: { children?: ReactNode; style?: CSSProperties }) { return <div style={{ ...styles.card, ...style }}>{children}</div>; }
+function Field({ label, children }: { label: string; children?: ReactNode }) { return <label style={styles.field}><span>{label}</span>{children}</label>; }
 function Detail({ label, value }: { label: string; value: ReactNode }) { return <div style={styles.detail}><span>{label}</span><strong>{value}</strong></div>; }
-function StatusItem({ label, value }: { label: string; value: string }) { return <div style={styles.statusTile}><span>{label}</span><strong>{value}</strong></div>; }
+function StatusItem({ label, value }: { label: string; value: ReactNode }) { return <div style={styles.statusTile}><span>{label}</span><strong>{value}</strong></div>; }
 function SearchBox({ value, onChange }: { value: string; onChange: (value: string) => void }) { return <div style={styles.searchBox}><Search size={18} /><input style={styles.searchInput} value={value} onChange={(event) => onChange(event.target.value)} placeholder="Search jobs..." /></div>; }
 function Badge({ children, tone }: { children: ReactNode; tone: "blue" | "green" | "yellow" | "red" }) { const toneStyle = tone === "blue" ? styles.badgeBlue : tone === "green" ? styles.badgeGreen : tone === "red" ? styles.badgeRed : styles.badgeYellow; return <span style={{ ...styles.badge, ...toneStyle }}>{children}</span>; }
 function Bar({ label, value, helper, warn, blue }: { label: string; value: number; helper: string; warn?: boolean; blue?: boolean }) { return <div style={styles.barRow}><div style={styles.barTop}><strong>{label}</strong><span>{helper}</span></div><div style={styles.barOuter}><div style={{ ...styles.barInner, width: `${Math.max(0, Math.min(100, value))}%`, background: warn ? "#f59e0b" : blue ? "#0ea5e9" : "#047857" }} /></div></div>; }
