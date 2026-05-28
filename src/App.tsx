@@ -1024,17 +1024,22 @@ function Sidebar({ activeView, setActiveView, user, isAdmin, onAddJob, onOpenSet
     <aside style={styles.sidebar}>
       <div style={styles.logo}>PJ&apos;S<br />ELECTRIC</div>
       <h2 style={styles.sidebarTitle}>PJ&apos;S ELECTRIC</h2>
+
       <SideButton active={activeView === "dashboard"} icon={<LayoutDashboard size={18} />} label="Jobs" onClick={() => setActiveView("dashboard")} />
-      <SideButton active={activeView === "planning"} icon={<BriefcaseBusiness size={18} />} label="Planning" onClick={() => setActiveView("planning")} />
-      <SideButton active={activeView === "reports"} icon={<FileText size={18} />} label="Reports" onClick={() => setActiveView("reports")} />
-      <SideButton active={activeView === "crewTasks"} icon={<CheckSquare size={18} />} label="Crew Tasks" onClick={() => setActiveView("crewTasks")} />
-      <SideButton active={activeView === "inspections"} icon={<ClipboardCheck size={18} />} label="Inspections" onClick={() => setActiveView("inspections")} />
-      <SideButton active={activeView === "timeTracking"} icon={<Timer size={18} />} label="Time Tracking" onClick={() => setActiveView("timeTracking")} />
-      <SideButton active={activeView === "labourTracking"} icon={<BarChart3 size={18} />} label="Labour Tracking" onClick={() => setActiveView("labourTracking")} />
       <SideButton active={activeView === "calendar"} icon={<CalendarClock size={18} />} label="Calendar" onClick={() => setActiveView("calendar")} />
-      {isAdmin && <SideButton active={activeView === "smallJobs"} icon={<ClipboardList size={18} />} label="Jobs To Do" onClick={() => setActiveView("smallJobs")} />}
-      {isAdmin && <SideButton icon={<Plus size={18} />} label="Add Job" onClick={onAddJob} />}
-      {isAdmin && <SideButton active={activeView === "potentialJobs"} icon={<BriefcaseBusiness size={18} />} label="Potential Jobs" onClick={() => setActiveView("potentialJobs")} />}
+
+      {isAdmin && (
+        <SideButton active={activeView === "smallJobs"} icon={<ClipboardList size={18} />} label="Jobs To Do" onClick={() => setActiveView("smallJobs")} />
+      )}
+
+      {isAdmin && (
+        <SideButton icon={<Plus size={18} />} label="Add Job" onClick={onAddJob} />
+      )}
+
+      {isAdmin && (
+        <SideButton active={activeView === "potentialJobs"} icon={<BriefcaseBusiness size={18} />} label="Potential Jobs" onClick={() => setActiveView("potentialJobs")} />
+      )}
+
       <SideButton active={activeView === "crewPoints"} icon={<Users size={18} />} label="Crew Points" onClick={() => setActiveView("crewPoints")} />
       <SideButton icon={<Settings size={18} />} label="Settings" onClick={onOpenSettings} />
 
@@ -1047,7 +1052,16 @@ function Sidebar({ activeView, setActiveView, user, isAdmin, onAddJob, onOpenSet
             {user.role === "Crew" && <b>{user.points} pts</b>}
           </div>
         </div>
-        <button style={styles.signOut} onClick={async () => { await supabase.auth.signOut(); onSignOut(); }}><LogOut size={16} /> Sign Out</button>
+
+        <button
+          style={styles.signOut}
+          onClick={async () => {
+            await supabase.auth.signOut();
+            onSignOut();
+          }}
+        >
+          <LogOut size={16} /> Sign Out
+        </button>
       </div>
     </aside>
   );
