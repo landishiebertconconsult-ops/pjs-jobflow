@@ -33,7 +33,7 @@ type View =
   | "calendar"
   | "smallJobs";
 type JobFolder = "crewTasks" | "inspections" | "pmTasks" | "dailyNotes" | "photos" | "documents" | "knowifyUploads" | "activityLog";
-type JobDocument = { id: number; jobId: number; fileName: string; uploadedBy: string; uploadedDate: string; uploadedAt?: string; type: "Photo" | "Document"; url?: string };
+type JobDocument = { id: number; jobId: string | number; fileName: string; uploadedBy: string; uploadedDate: string; uploadedAt?: string; type: "Photo" | "Document"; url?: string };
 type JobDocumentUpload = { fileName: string; type: "Photo" | "Document"; url?: string };
 type JobStatus = "Planning" | "Active" | "On Hold" | "Complete";
 type Risk = "Green" | "Yellow" | "Red";
@@ -55,7 +55,7 @@ type User = {
 };
 
 type Job = {
-  id: number;
+  id: string | number;
   jobNumber: string;
   name: string;
   customer: string;
@@ -135,7 +135,7 @@ type PointHistory = {
 
 type DailyReport = {
   id: number;
-  jobId: number;
+  jobId: string | number;
   userId: number;
   userName: string;
   jobName: string;
@@ -334,6 +334,37 @@ const initialDocuments: JobDocument[] = [
 const pct = (used: number, total: number) => Math.max(0, Math.min(100, Math.round((used / Math.max(total, 1)) * 100)));
 const initials = (name: string) => name.split(" ").map((n) => n[0]).join("").slice(0, 2);
 const userById = (users: User[], id: number) => users.find((u) => u.id === id);
+
+function mapSupabaseJob(job: any): Job {
+  return {
+    id: job.id,
+    jobNumber: job.job_number || "",
+    name: job.name || "",
+    customer: job.customer || "",
+    location: job.location || "",
+    status: (job.status || "Planning") as JobStatus,
+    certainty: job.certainty || "Confirmed",
+    phase: job.phase || "Planning",
+    risk: (job.risk || "Green") as Risk,
+    startDate: job.start_date || "",
+    finishDate: job.finish_date || "",
+    nextAction: job.next_action || "",
+    actionOwner: job.action_owner || "",
+    actionDue: job.action_due || "",
+    progress: Number(job.progress || 0),
+    allowedHours: Number(job.allowed_hours || 0),
+    usedHours: Number(job.used_hours || 0),
+    labourBudget: Number(job.labour_budget || 0),
+    labourCostToDate: Number(job.labour_cost_to_date || 0),
+    budget: Number(job.budget || 0),
+    costToDate: Number(job.cost_to_date || 0),
+    crewIds: Array.isArray(job.crew_ids) ? job.crew_ids : [],
+    crewTasks: [],
+    projectTasks: pmTaskList(0),
+    pmRequests: [],
+    inspections: [],
+  };
+}
 const currency = (n: number) => `$${Math.round(n).toLocaleString()}`;
 const budgetUsedPctForJob = (job: Job) => pct(job.costToDate, job.budget);
 const budgetLeftPctForJob = (job: Job) => Math.max(0, 100 - budgetUsedPctForJob(job));
@@ -383,7 +414,7 @@ export default function App() {
   const [points, setPoints] = useState<PointHistory[]>(initialPoints);
   const [dailyReports, setDailyReports] = useState<DailyReport[]>(initialDailyReports);
   const [documents, setDocuments] = useState<JobDocument[]>(initialDocuments);
-  const [selectedId, setSelectedId] = useState(1);
+  const [selectedId, setSelectedId] = useState<string | number>(1);
   const [search, setSearch] = useState("");
   const [currentUserId, setCurrentUserId] = useState(1);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -418,6 +449,29 @@ export default function App() {
 
     return () => listener.subscription.unsubscribe();
   }, [users]);
+
+  useEffect(() => {
+    async function loadJobs() {
+      const { data, error } = await supabase
+        .from("jobs")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("Error loading jobs:", error.message);
+        return;
+      }
+
+      const mappedJobs = (data || []).map(mapSupabaseJob);
+      setJobs(mappedJobs);
+
+      if (mappedJobs.length > 0) {
+        setSelectedId(mappedJobs[0].id);
+      }
+    }
+
+    if (isLoggedIn) loadJobs();
+  }, [isLoggedIn]);
   const [showSettings, setShowSettings] = useState(false);
   const [showAddJob, setShowAddJob] = useState(false);
 
@@ -433,10 +487,32 @@ export default function App() {
   }, [jobs, isAdmin, currentUser.id, search]);
 
   const selectedJob = visibleJobs.find((job) => job.id === selectedId) || visibleJobs[0] || jobs[0];
-  const selectedCrew = users.filter((u) => selectedJob.crewIds.includes(u.id));
+  const selectedCrew = selectedJob ? users.filter((u) => selectedJob.crewIds.includes(u.id)) : [];
 
-  function updateJob(update: Partial<Job>) {
+async function updateJob(update: Partial<Job>) {
+    if (!selectedJob) return;
+
     setJobs((all) => all.map((job) => (job.id === selectedJob.id ? { ...job, ...update } : job)));
+
+    await supabase
+      .from("jobs")
+      .update({
+        status: update.status,
+        phase: update.phase,
+        risk: update.risk,
+        progress: update.progress,
+        next_action: update.nextAction,
+        action_owner: update.actionOwner,
+        action_due: update.actionDue,
+        allowed_hours: update.allowedHours,
+        used_hours: update.usedHours,
+        labour_budget: update.labourBudget,
+        labour_cost_to_date: update.labourCostToDate,
+        budget: update.budget,
+        cost_to_date: update.costToDate,
+        crew_ids: update.crewIds,
+      })
+      .eq("id", selectedJob.id);
   }
 
   function toggleTask(type: "crewTasks" | "projectTasks" | "pmRequests", id: number) {
@@ -478,16 +554,16 @@ export default function App() {
     setPoints((all) => [{ id: Date.now(), userId, awardedById: currentUser.id, points: -deduction, reason: `Redeemed / Purchase: ${reason}`, date: new Date().toISOString().slice(0, 10), jobName: "Crew Points Store" }, ...all]);
   }
 
-  function toggleCrewTaskForJob(jobId: number, taskId: number) {
+  function toggleCrewTaskForJob(jobId: string | number, taskId: number) {
     setJobs((all) => all.map((job) => job.id === jobId ? { ...job, crewTasks: job.crewTasks.map((task) => task.id === taskId ? { ...task, done: !task.done } : task) } : job));
   }
 
-  function addCrewTaskForJob(jobId: number, title: string) {
+  function addCrewTaskForJob(jobId: string | number, title: string) {
     if (!title.trim()) return;
     setJobs((all) => all.map((job) => job.id === jobId ? { ...job, crewTasks: [{ id: Date.now(), title: `${title.trim()} — added by ${currentUser.name}`, done: false }, ...job.crewTasks] } : job));
   }
 
-  function submitDailyReport(jobId: number, note: string, pictures: string[] = [], pictureUploads: JobDocumentUpload[] = []) {
+  function submitDailyReport(jobId: string | number, note: string, pictures: string[] = [], pictureUploads: JobDocumentUpload[] = []) {
     if (!note.trim()) return;
     const job = jobs.find((item) => item.id === jobId);
     if (!job) return;
@@ -563,7 +639,7 @@ export default function App() {
     }
   }
 
-  function uploadJobDocuments(jobId: number, uploads: JobDocumentUpload[]) {
+  function uploadJobDocuments(jobId: string | number, uploads: JobDocumentUpload[]) {
     if (uploads.length === 0) return;
     const today = new Date().toISOString().slice(0, 10);
     setDocuments((all) => [
@@ -585,12 +661,79 @@ export default function App() {
     setShowAddJob(true);
   }
 
-  function deleteJob(jobId: number) {
+async function deleteJob(jobId: string | number) {
+    await supabase.from("jobs").delete().eq("id", jobId);
+
     setJobs((prevJobs) => {
       const remainingJobs = prevJobs.filter((job) => job.id !== jobId);
       setSelectedId(remainingJobs[0]?.id || 0);
       return remainingJobs;
     });
+  }
+
+  if (isLoggedIn && !selectedJob && activeView !== "settings") {
+    return (
+      <div id="jobflow-app" style={styles.app}>
+        <MobileCrewStyles />
+        <Sidebar activeView={activeView} setActiveView={setActiveView} user={currentUser} isAdmin={isAdmin} onAddJob={addJob} onOpenSettings={() => setShowSettings(true)} onSignOut={() => setIsLoggedIn(false)} />
+        <main style={styles.main}>
+          <Header currentUser={currentUser} onOpenSettings={() => setShowSettings(true)} />
+          <Card>
+            <h2 style={styles.cardTitle}>No jobs found</h2>
+            <p style={styles.muted}>Your Supabase jobs table is connected, but there are no jobs saved yet. Click Add Job to create your first live database job.</p>
+            {isAdmin && <button style={styles.primary} onClick={addJob}><Plus size={16} /> Add Job</button>}
+          </Card>
+          {showAddJob && (
+            <AddJobModal
+              users={users}
+              onClose={() => setShowAddJob(false)}
+              onCreate={async (input) => {
+                const today = new Date().toISOString().slice(0, 10);
+                const jobNumber = `PJ-2026-${String(jobs.length + 1).padStart(3, "0")}`;
+                const { data, error } = await supabase
+                  .from("jobs")
+                  .insert({
+                    job_number: jobNumber,
+                    name: input.name || "New Awarded Job",
+                    customer: input.customer || "New Customer",
+                    location: input.location || "Location",
+                    status: "Planning",
+                    certainty: "Confirmed",
+                    phase: "Planning",
+                    risk: "Green",
+                    start_date: input.startDate || today,
+                    finish_date: input.finishDate || today,
+                    next_action: "Review project setup and assign first action item",
+                    action_owner: currentUser.name,
+                    action_due: input.startDate || today,
+                    progress: 0,
+                    allowed_hours: input.allowedHours || 0,
+                    used_hours: 0,
+                    budget: input.budget || 0,
+                    cost_to_date: 0,
+                    labour_budget: input.labourBudget || 0,
+                    labour_cost_to_date: 0,
+                    crew_ids: input.crewIds,
+                  })
+                  .select("*")
+                  .single();
+
+                if (error) {
+                  window.alert(error.message);
+                  return;
+                }
+
+                const newJob = mapSupabaseJob(data);
+                setJobs([newJob, ...jobs]);
+                setSelectedId(newJob.id);
+                setShowAddJob(false);
+                setActiveView("dashboard");
+              }}
+            />
+          )}
+        </main>
+      </div>
+    );
   }
 
   if (!isLoggedIn) {
@@ -723,36 +866,44 @@ export default function App() {
     <AddJobModal
       users={users}
       onClose={() => setShowAddJob(false)}
-      onCreate={(input) => {
+      onCreate={async (input) => {
         const today = new Date().toISOString().slice(0, 10);
-        const newJob: Job = {
-          id: Date.now(),
-          jobNumber: `PJ-2026-${String(jobs.length + 1).padStart(3, "0")}`,
-          name: input.name || "New Awarded Job",
-          customer: input.customer || "New Customer",
-          location: input.location || "Location",
-          status: "Planning",
-          certainty: "Confirmed",
-          phase: "Planning",
-          risk: "Green",
-          startDate: input.startDate || today,
-          finishDate: input.finishDate || today,
-          nextAction: "Review project setup and assign first action item",
-          actionOwner: currentUser.name,
-          actionDue: input.startDate || today,
-          progress: 0,
-          allowedHours: input.allowedHours || 0,
-          usedHours: 0,
-          budget: input.budget || 0,
-          costToDate: 0,
-          labourBudget: input.labourBudget || 0,
-          labourCostToDate: 0,
-          crewIds: input.crewIds,
-          crewTasks: [],
-          projectTasks: pmTaskList(0),
-          pmRequests: [],
-          inspections: [],
-        };
+        const jobNumber = `PJ-2026-${String(jobs.length + 1).padStart(3, "0")}`;
+
+        const { data, error } = await supabase
+          .from("jobs")
+          .insert({
+            job_number: jobNumber,
+            name: input.name || "New Awarded Job",
+            customer: input.customer || "New Customer",
+            location: input.location || "Location",
+            status: "Planning",
+            certainty: "Confirmed",
+            phase: "Planning",
+            risk: "Green",
+            start_date: input.startDate || today,
+            finish_date: input.finishDate || today,
+            next_action: "Review project setup and assign first action item",
+            action_owner: currentUser.name,
+            action_due: input.startDate || today,
+            progress: 0,
+            allowed_hours: input.allowedHours || 0,
+            used_hours: 0,
+            budget: input.budget || 0,
+            cost_to_date: 0,
+            labour_budget: input.labourBudget || 0,
+            labour_cost_to_date: 0,
+            crew_ids: input.crewIds,
+          })
+          .select("*")
+          .single();
+
+        if (error) {
+          window.alert(error.message);
+          return;
+        }
+
+        const newJob = mapSupabaseJob(data);
         setJobs([newJob, ...jobs]);
         setSelectedId(newJob.id);
         setShowAddJob(false);
@@ -878,7 +1029,7 @@ function Header({ currentUser, onOpenSettings }: { currentUser: User; onOpenSett
   );
 }
 
-function DashboardView({ jobs, selectedJob, selectedCrew, search, setSearch, setSelectedId, updateJob, deleteJob, toggleTask, updateInspection, isAdmin, currentUser, dailyReports, submitDailyReport, documents, uploadJobDocuments, potentialJobs, setPotentialJobs }: { jobs: Job[]; selectedJob: Job; selectedCrew: User[]; search: string; setSearch: (value: string) => void; setSelectedId: (id: number) => void; updateJob: (update: Partial<Job>) => void; deleteJob: (jobId: number) => void; toggleTask: (type: "crewTasks" | "projectTasks" | "pmRequests", id: number) => void; updateInspection: (id: number, status: string) => void; isAdmin: boolean; currentUser: User; dailyReports: DailyReport[]; submitDailyReport: (jobId: number, note: string, pictures?: string[], pictureUploads?: JobDocumentUpload[]) => void; documents: JobDocument[]; uploadJobDocuments: (jobId: number, uploads: JobDocumentUpload[]) => void; potentialJobs: PotentialJob[]; setPotentialJobs: (jobs: PotentialJob[]) => void }) {
+function DashboardView({ jobs, selectedJob, selectedCrew, search, setSearch, setSelectedId, updateJob, deleteJob, toggleTask, updateInspection, isAdmin, currentUser, dailyReports, submitDailyReport, documents, uploadJobDocuments, potentialJobs, setPotentialJobs }: { jobs: Job[]; selectedJob: Job; selectedCrew: User[]; search: string; setSearch: (value: string) => void; setSelectedId: (id: string | number) => void; updateJob: (update: Partial<Job>) => void; deleteJob: (jobId: string | number) => void; toggleTask: (type: "crewTasks" | "projectTasks" | "pmRequests", id: number) => void; updateInspection: (id: number, status: string) => void; isAdmin: boolean; currentUser: User; dailyReports: DailyReport[]; submitDailyReport: (jobId: string | number, note: string, pictures?: string[], pictureUploads?: JobDocumentUpload[]) => void; documents: JobDocument[]; uploadJobDocuments: (jobId: string | number, uploads: JobDocumentUpload[]) => void; potentialJobs: PotentialJob[]; setPotentialJobs: (jobs: PotentialJob[]) => void }) {
   const [jobOpen, setJobOpen] = useState(false);
   const [activeFolder, setActiveFolder] = useState<JobFolder>("crewTasks");
   const [showPotentialForm, setShowPotentialForm] = useState(false);
@@ -1006,7 +1157,7 @@ function JobFolderTabs({ activeFolder, setActiveFolder }: { activeFolder: JobFol
   return <div style={styles.jobFolderTabs}>{folders.map((folder) => <button key={folder.id} style={activeFolder === folder.id ? styles.folderTabActive : styles.folderTab} onClick={() => setActiveFolder(folder.id)}>{folder.label}</button>)}</div>;
 }
 
-function JobFolderContent({ job, activeFolder, isAdmin, updateJob, updateInspection, toggleTask, dailyReports, currentUser, submitDailyReport, documents, uploadJobDocuments }: { job: Job; activeFolder: JobFolder; isAdmin: boolean; updateJob: (update: Partial<Job>) => void; updateInspection: (id: number, status: string) => void; toggleTask: (type: "crewTasks" | "projectTasks" | "pmRequests", id: number) => void; dailyReports: DailyReport[]; currentUser: User; submitDailyReport: (jobId: number, note: string, pictures?: string[], pictureUploads?: JobDocumentUpload[]) => void; documents: JobDocument[]; uploadJobDocuments: (jobId: number, uploads: JobDocumentUpload[]) => void }) {
+function JobFolderContent({ job, activeFolder, isAdmin, updateJob, updateInspection, toggleTask, dailyReports, currentUser, submitDailyReport, documents, uploadJobDocuments }: { job: Job; activeFolder: JobFolder; isAdmin: boolean; updateJob: (update: Partial<Job>) => void; updateInspection: (id: number, status: string) => void; toggleTask: (type: "crewTasks" | "projectTasks" | "pmRequests", id: number) => void; dailyReports: DailyReport[]; currentUser: User; submitDailyReport: (jobId: string | number, note: string, pictures?: string[], pictureUploads?: JobDocumentUpload[]) => void; documents: JobDocument[]; uploadJobDocuments: (jobId: string | number, uploads: JobDocumentUpload[]) => void }) {
   const [newCrewTask, setNewCrewTask] = useState("");
   const [newInspectionTitle, setNewInspectionTitle] = useState("");
   const [newPmTaskTitle, setNewPmTaskTitle] = useState("");
@@ -1572,7 +1723,7 @@ function HealthSummary({ job, crew, isAdmin }: { job: Job; crew: User[]; isAdmin
   );
 }
 
-function JobList({ jobs, selectedJob, setSelectedId }: { jobs: Job[]; selectedJob: Job; setSelectedId: (id: number) => void }) {
+function JobList({ jobs, selectedJob, setSelectedId }: { jobs: Job[]; selectedJob: Job; setSelectedId: (id: string | number) => void }) {
   return (
     <div style={styles.jobList}>
       <div style={styles.jobListHeader}><span>Job</span><span>Status</span><span>Phase</span><span>Risk</span><span>Budget Priority</span><span>Health</span></div>
@@ -2157,9 +2308,9 @@ function ReportsView({ isAdmin, jobs }: { isAdmin: boolean; jobs: Job[] }) {
   return <div style={styles.cleanStack}><PageTitle title="Reports" subtitle="Daily reports, site reports, inspection reports, and export packages." /><div style={styles.moduleGrid}><ModuleCard title="Daily Reports" icon={<FileText />} items={["Foreman daily notes", "Labour installed", "Delays / issues", "Site photos"]} /><ModuleCard title="Site Reports" icon={<FileText />} items={["Progress reports", "Consultant/RFI issues", "Client-ready summaries", "Deficiency notes"]} /><ModuleCard title="Inspection Reports" icon={<ClipboardCheck />} items={jobs.flatMap((job) => job.inspections.map((inspection) => `${job.name}: ${inspection.title} · ${inspection.status}`)).slice(0, 6)} />{isAdmin && <ModuleCard title="Financial Reports" icon={<BarChart3 />} items={["Labour cost", "Profitability", "Change order totals", "Cost to complete"]} />}<ModuleCard title="Export Center" icon={<FileText />} items={["PDF report package", "Excel export", "Inspection summary", "O&M / closeout package"]} /></div></div>;
 }
 
-function CrewTasksView({ jobs, currentUser, toggleCrewTaskForJob, addCrewTaskForJob, submitDailyReport, dailyReports }: { jobs: Job[]; currentUser: User; toggleCrewTaskForJob: (jobId: number, taskId: number) => void; addCrewTaskForJob: (jobId: number, title: string) => void; submitDailyReport: (jobId: number, note: string, pictures?: string[], pictureUploads?: JobDocumentUpload[]) => void; dailyReports: DailyReport[] }) {
-  const [taskTextByJob, setTaskTextByJob] = useState<Record<number, string>>({});
-  const [reportTextByJob, setReportTextByJob] = useState<Record<number, string>>({});
+function CrewTasksView({ jobs, currentUser, toggleCrewTaskForJob, addCrewTaskForJob, submitDailyReport, dailyReports }: { jobs: Job[]; currentUser: User; toggleCrewTaskForJob: (jobId: string | number, taskId: number) => void; addCrewTaskForJob: (jobId: string | number, title: string) => void; submitDailyReport: (jobId: string | number, note: string, pictures?: string[], pictureUploads?: JobDocumentUpload[]) => void; dailyReports: DailyReport[] }) {
+  const [taskTextByJob, setTaskTextByJob] = useState<Record<string | number, string>>({});
+  const [reportTextByJob, setReportTextByJob] = useState<Record<string | number, string>>({});
   const earnsDailyReportPoints = currentUser.role === "Crew" || currentUser.role === "Foreman";
 
   return (
@@ -2282,7 +2433,7 @@ function CrewPoints({ users, setUsers, jobs, points, currentUser, selectedJob, a
   );
 }
 
-function InspectionsView({ jobs, selectedJob, setSelectedId, updateInspection, isAdmin }: { jobs: Job[]; selectedJob: Job; setSelectedId: (id: number) => void; updateInspection: (id: number, status: string) => void; isAdmin: boolean }) {
+function InspectionsView({ jobs, selectedJob, setSelectedId, updateInspection, isAdmin }: { jobs: Job[]; selectedJob: Job; setSelectedId: (id: string | number) => void; updateInspection: (id: number, status: string) => void; isAdmin: boolean }) {
   return <div style={styles.cleanStack}><PageTitle title="Inspections" subtitle={isAdmin ? "Admin/PM can update inspection statuses." : "Crew and foremen can view inspection status only."} /><div style={styles.dashboardGrid}><Card><h3 style={styles.sideTitle}>Jobs</h3>{jobs.map((job) => <button key={job.id} style={{ ...styles.cleanInspection, width: "100%", textAlign: "left", cursor: "pointer", background: job.id === selectedJob.id ? "#ecfdf5" : "#f8fafc" }} onClick={() => setSelectedId(job.id)}><strong>{job.name}</strong><span>{job.inspections.length} inspections</span></button>)}</Card><InspectionCard inspections={selectedJob.inspections} canEdit={isAdmin} onChange={updateInspection} /></div></div>;
 }
 
@@ -2294,7 +2445,7 @@ function LabourTrackingView({ isAdmin, jobs }: { isAdmin: boolean; jobs: Job[] }
   return <div style={styles.cleanStack}><PageTitle title="Labour Tracking" subtitle={isAdmin ? "Admin view with true labour and budget values." : "Crew/foreman view shows percentages only."} /><div style={styles.labourGrid}>{jobs.map((job) => <Card key={job.id}><h3 style={styles.sideTitle}>{job.name}</h3><HealthBars job={job} isAdmin={isAdmin} />{isAdmin && <div style={styles.detailGrid}><Detail label="Allowed Hours" value={`${job.allowedHours}`} /><Detail label="Used Hours" value={`${job.usedHours}`} /><Detail label="Budget" value={currency(job.budget)} /><Detail label="Cost To Date" value={currency(job.costToDate)} /></div>}</Card>)}</div></div>;
 }
 
-function AddJobModal({ users, onClose, onCreate }: { users: User[]; onClose: () => void; onCreate: (input: { name: string; customer: string; location: string; startDate: string; finishDate: string; crewIds: number[]; labourBudget: number; budget: number }) => void }) {
+function AddJobModal({ users, onClose, onCreate }: { users: User[]; onClose: () => void; onCreate: (input: { name: string; customer: string; location: string; startDate: string; finishDate: string; crewIds: number[]; labourBudget: number; allowedHours?: number; budget: number }) => void | Promise<void> }) {
   const today = new Date().toISOString().slice(0, 10);
   const [name, setName] = useState("");
   const [customer, setCustomer] = useState("");
