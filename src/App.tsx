@@ -4,6 +4,22 @@ import * as XLSX from "xlsx";
 import { BarChart3, BriefcaseBusiness, CalendarClock, CheckSquare, ClipboardCheck, ClipboardList, FileText, LayoutDashboard, LogOut, PackageCheck, Plus, Search, Settings, ShieldCheck, Timer, Trash2, Users } from "lucide-react";
 
 type Role = "Admin" | "Project Manager" | "Foreman" | "Crew";
+
+async function createUserInSupabase(input: {
+  email: string;
+  password: string;
+  full_name: string;
+  role: Role;
+}) {
+  const { data, error } = await supabase.functions.invoke("create-user", {
+    body: input,
+  });
+
+  if (error) throw new Error(error.message);
+  if (!data?.success) throw new Error(data?.error || "User could not be created.");
+
+  return data.user;
+}
 type View =
   | "dashboard"
   | "planning"
@@ -26,6 +42,7 @@ type Inspection = { id: number; title: string; status: string; date: string; not
 
 type User = {
   id: number;
+  supabaseId?: string;
   name: string;
   role: Role;
   points: number;
@@ -2371,27 +2388,52 @@ function SettingsModal({ users, setUsers, currentUser, onClose }: { users: User[
   const [monthlyPointLimit, setMonthlyPointLimit] = useState(25);
   const [temporaryPassword, setTemporaryPassword] = useState("temp123");
 
-  function addUser() {
-    if (!isAdmin || !name.trim()) return;
-    setUsers([
-      ...users,
-      {
-        id: Date.now(),
-        name: name.trim(),
+async function addUser() {
+    if (!isAdmin) return;
+
+    const cleanName = name.trim();
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPassword = temporaryPassword.trim() || "Temp123!";
+
+    if (!cleanName || !cleanEmail || !cleanPassword) {
+      window.alert("Name, email, and temporary password are required.");
+      return;
+    }
+
+    try {
+      const authUser = await createUserInSupabase({
+        email: cleanEmail,
+        password: cleanPassword,
+        full_name: cleanName,
         role,
-        points: 0,
-        monthlyPointLimit: role === "Foreman" ? monthlyPointLimit : 0,
-        email: email.trim(),
-        password: temporaryPassword || "temp123",
-        mustSetPassword: true,
-        active: true,
-      },
-    ]);
-    setName("");
-    setEmail("");
-    setRole("Crew");
-    setMonthlyPointLimit(25);
-    setTemporaryPassword("temp123");
+      });
+
+      setUsers([
+        ...users,
+        {
+          id: Date.now(),
+          supabaseId: authUser.id,
+          name: cleanName,
+          role,
+          points: 0,
+          monthlyPointLimit: role === "Foreman" ? monthlyPointLimit : 0,
+          email: cleanEmail,
+          password: cleanPassword,
+          mustSetPassword: true,
+          active: true,
+        },
+      ]);
+
+      setName("");
+      setEmail("");
+      setRole("Crew");
+      setMonthlyPointLimit(25);
+      setTemporaryPassword("Temp123!");
+
+      window.alert(`User created in Supabase and added to JobFlow: ${cleanName}`);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Unable to create user in Supabase.");
+    }
   }
 
   function updateUser(id: number, update: Partial<User>) {
