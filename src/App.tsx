@@ -2425,8 +2425,26 @@ function LabourTrackingView({ isAdmin, jobs }: { isAdmin: boolean; jobs: Job[] }
   return <div style={styles.cleanStack}><PageTitle title="Labour Tracking" subtitle={isAdmin ? "Admin view with true labour and budget values." : "Crew/foreman view shows percentages only."} /><div style={styles.labourGrid}>{jobs.map((job) => <Card key={job.id}><h3 style={styles.sideTitle}>{job.name}</h3><HealthBars job={job} isAdmin={isAdmin} />{isAdmin && <div style={styles.detailGrid}><Detail label="Allowed Hours" value={`${job.allowedHours}`} /><Detail label="Used Hours" value={`${job.usedHours}`} /><Detail label="Budget" value={currency(job.budget)} /><Detail label="Cost To Date" value={currency(job.costToDate)} /></div>}</Card>)}</div></div>;
 }
 
-function AddJobModal({ users, onClose, onCreate }: { users: User[]; onClose: () => void; onCreate: (input: { name: string; customer: string; location: string; startDate: string; finishDate: string; crewIds: number[]; labourBudget: number; allowedHours?: number; budget: number }) => void | Promise<void> }) {
+function AddJobModal({
+  users,
+  onClose,
+  onCreate,
+}: {
+  users: User[];
+  onClose: () => void;
+  onCreate: (input: {
+    name: string;
+    customer: string;
+    location: string;
+    startDate: string;
+    finishDate: string;
+    crewIds: number[];
+    labourBudget: number;
+    budget: number;
+  }) => void;
+}) {
   const today = new Date().toISOString().slice(0, 10);
+
   const [name, setName] = useState("");
   const [customer, setCustomer] = useState("");
   const [location, setLocation] = useState("");
@@ -2435,32 +2453,166 @@ function AddJobModal({ users, onClose, onCreate }: { users: User[]; onClose: () 
   const [labourBudget, setLabourBudget] = useState(0);
   const [budget, setBudget] = useState(0);
   const [crewIds, setCrewIds] = useState<number[]>([]);
-  const assignableUsers = users.filter((user) => user.role === "Foreman" || user.role === "Crew");
+
+  const [liveUsers, setLiveUsers] = useState<User[]>(users);
+  const [loadingUsers, setLoadingUsers] = useState(true);
+  const [userLoadError, setUserLoadError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadAssignableUsers() {
+      try {
+        setLoadingUsers(true);
+        setUserLoadError("");
+
+        const loadedUsers = await fetchProfilesFromSupabase();
+
+        if (!cancelled) {
+          setLiveUsers(loadedUsers);
+        }
+      } catch (error) {
+        console.error("Unable to load employees:", error);
+
+        if (!cancelled) {
+          setUserLoadError(
+            error instanceof Error
+              ? error.message
+              : "Unable to load employees from Supabase."
+          );
+
+          // Fall back to the users already loaded in the app
+          setLiveUsers(users);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingUsers(false);
+        }
+      }
+    }
+
+    loadAssignableUsers();
+
+    const channel = supabase
+      .channel(`add-job-users-${Date.now()}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "profiles",
+        },
+        () => {
+          loadAssignableUsers();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
+  }, [users]);
+
+  const assignableUsers = liveUsers.filter(
+    (user) =>
+      user.active !== false &&
+      (user.role === "Foreman" || user.role === "Crew")
+  );
 
   function toggleCrew(id: number) {
-    setCrewIds((current) => current.includes(id) ? current.filter((crewId) => crewId !== id) : [...current, id]);
+    setCrewIds((current) =>
+      current.includes(id)
+        ? current.filter((crewId) => crewId !== id)
+        : [...current, id]
+    );
   }
 
   return (
     <div style={styles.modalBackdrop}>
-      <div style={styles.settingsModal}>
+      <div style={styles.addJobModal}>
         <div style={styles.cardHeader}>
           <div>
             <h2 style={styles.cardTitle}>Add New Job</h2>
-            <p style={styles.muted}>Set up the job name, dates, assigned employees, and preload the standard PM checklist.</p>
+            <p style={styles.muted}>
+              Set up the job name, dates, assigned employees, and preload the
+              standard PM checklist.
+            </p>
           </div>
-          <button style={styles.closeButton} onClick={onClose}>×</button>
+
+          <button style={styles.closeButton} onClick={onClose}>
+            ×
+          </button>
         </div>
 
         <Card>
           <div style={styles.addJobGrid}>
-            <Field label="Job Name"><input style={styles.input} value={name} onChange={(event) => setName(event.target.value)} placeholder="Example: Fort Hope Service" /></Field>
-            <Field label="Customer / GC"><input style={styles.input} value={customer} onChange={(event) => setCustomer(event.target.value)} placeholder="Example: Penn-co Construction" /></Field>
-            <Field label="Location"><input style={styles.input} value={location} onChange={(event) => setLocation(event.target.value)} placeholder="Example: Fort Hope" /></Field>
-            <Field label="Projected Start"><input style={styles.input} type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></Field>
-            <Field label="Projected Finish"><input style={styles.input} type="date" value={finishDate} onChange={(event) => setFinishDate(event.target.value)} /></Field>
-            <Field label="Labour Budget Allowed ($)"><input style={styles.input} type="number" value={labourBudget} onChange={(event) => setLabourBudget(Number(event.target.value))} placeholder="Example: 92000" /></Field>
-            <Field label="Project Budget"><input style={styles.input} type="number" value={budget} onChange={(event) => setBudget(Number(event.target.value))} placeholder="Example: 185000" /></Field>
+            <Field label="Job Name">
+              <input
+                style={styles.input}
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder="Job name"
+              />
+            </Field>
+
+            <Field label="Customer / GC">
+              <input
+                style={styles.input}
+                value={customer}
+                onChange={(event) => setCustomer(event.target.value)}
+                placeholder="Customer or GC"
+              />
+            </Field>
+
+            <Field label="Location">
+              <input
+                style={styles.input}
+                value={location}
+                onChange={(event) => setLocation(event.target.value)}
+                placeholder="Location"
+              />
+            </Field>
+
+            <Field label="Projected Start">
+              <input
+                style={styles.input}
+                type="date"
+                value={startDate}
+                onChange={(event) => setStartDate(event.target.value)}
+              />
+            </Field>
+
+            <Field label="Projected Finish">
+              <input
+                style={styles.input}
+                type="date"
+                value={finishDate}
+                onChange={(event) => setFinishDate(event.target.value)}
+              />
+            </Field>
+
+            <Field label="Labour Budget Allowed ($)">
+              <input
+                style={styles.input}
+                type="number"
+                value={labourBudget}
+                onChange={(event) =>
+                  setLabourBudget(Number(event.target.value))
+                }
+                placeholder="Example: 92000"
+              />
+            </Field>
+
+            <Field label="Project Budget">
+              <input
+                style={styles.input}
+                type="number"
+                value={budget}
+                onChange={(event) => setBudget(Number(event.target.value))}
+                placeholder="Example: 185000"
+              />
+            </Field>
           </div>
         </Card>
 
@@ -2468,16 +2620,52 @@ function AddJobModal({ users, onClose, onCreate }: { users: User[]; onClose: () 
           <div style={styles.compactCardHeader}>
             <div>
               <h3 style={styles.sideTitle}>Assign Employees</h3>
-              <p style={styles.muted}>Click employees below to assign them to this job. Only assigned crew/foremen will see the job.</p>
+              <p style={styles.muted}>
+                Click employees below to assign them to this job. Only assigned
+                crew/foremen will see the job.
+              </p>
             </div>
-            <span style={styles.smallPill}>{crewIds.length} assigned</span>
+
+            <span style={styles.smallPill}>
+              {crewIds.length} assigned
+            </span>
           </div>
+
+          {loadingUsers && (
+            <p style={styles.muted}>Loading employees from Supabase...</p>
+          )}
+
+          {userLoadError && (
+            <div style={styles.loginError}>
+              Could not refresh employees: {userLoadError}
+            </div>
+          )}
+
+          {!loadingUsers && assignableUsers.length === 0 && (
+            <p style={styles.muted}>
+              No active Crew or Foreman users found.
+            </p>
+          )}
+
           <div style={styles.employeePickGrid}>
             {assignableUsers.map((user) => {
               const selected = crewIds.includes(user.id);
+
               return (
-                <button key={user.id} type="button" style={selected ? styles.employeePickSelected : styles.employeePick} onClick={() => toggleCrew(user.id)}>
-                  <div style={styles.smallAvatar}>{initials(user.name)}</div>
+                <button
+                  key={user.supabaseId || user.id}
+                  type="button"
+                  style={
+                    selected
+                      ? styles.employeePickSelected
+                      : styles.employeePick
+                  }
+                  onClick={() => toggleCrew(user.id)}
+                >
+                  <div style={styles.smallAvatar}>
+                    {initials(user.name)}
+                  </div>
+
                   <div>
                     <strong>{user.name}</strong>
                     <span>{user.role}</span>
@@ -2492,19 +2680,50 @@ function AddJobModal({ users, onClose, onCreate }: { users: User[]; onClose: () 
           <div style={styles.compactCardHeader}>
             <div>
               <h3 style={styles.sideTitle}>Preloaded PM Checklist</h3>
-              <p style={styles.muted}>This checklist will be automatically added to the job file.</p>
+              <p style={styles.muted}>
+                This checklist will be automatically added to the job file.
+              </p>
             </div>
-            <span style={styles.smallPill}>{pmTaskList(0).length} tasks</span>
+
+            <span style={styles.smallPill}>
+              {pmTaskList(0).length} tasks
+            </span>
           </div>
+
           <div style={styles.checklistPreview}>
-            {pmTaskList(0).slice(0, 8).map((task) => <span key={task.id}>{task.title}</span>)}
+            {pmTaskList(0)
+              .slice(0, 8)
+              .map((task) => (
+                <span key={task.id}>{task.title}</span>
+              ))}
+
             <span>+ more checklist items...</span>
           </div>
         </Card>
 
         <div style={styles.modalActions}>
-          <button style={styles.secondary} onClick={onClose}>Cancel</button>
-          <button style={styles.primary} onClick={() => onCreate({ name, customer, location, startDate, finishDate, crewIds, labourBudget, budget })}><Plus size={16} /> Create Job</button>
+          <button style={styles.secondary} onClick={onClose}>
+            Cancel
+          </button>
+
+          <button
+            style={styles.primary}
+            onClick={() =>
+              onCreate({
+                name,
+                customer,
+                location,
+                startDate,
+                finishDate,
+                crewIds,
+                labourBudget,
+                budget,
+              })
+            }
+          >
+            <Plus size={16} />
+            Create Job
+          </button>
         </div>
       </div>
     </div>
