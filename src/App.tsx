@@ -15,25 +15,8 @@ async function createUserInSupabase(input: {
     body: input,
   });
 
-  if (error) {
-    let message = error.message;
-
-    try {
-      const context = (error as any).context;
-      if (context?.json) {
-        const errorBody = await context.json();
-        message = errorBody?.error || errorBody?.message || message;
-      }
-    } catch {
-      // keep original message
-    }
-
-    throw new Error(message);
-  }
-
-  if (!data?.success) {
-    throw new Error(data?.error || "User could not be created.");
-  }
+  if (error) throw new Error(error.message);
+  if (!data?.success) throw new Error(data?.error || "User could not be created.");
 
   return data.user;
 }
@@ -167,19 +150,58 @@ type SupabaseProfile = {
   id: string;
   email: string;
   full_name: string;
-  role: Role;
+  role: Role | "Crew Member";
   points?: number | null;
   active?: boolean | null;
 };
 
+const appRoleFromProfile = (role: SupabaseProfile["role"]): Role =>
+  role === "Crew Member" ? "Crew" : role;
+
+const stableNumericIdFromUuid = (value: string) => {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+  }
+  return Math.max(1, hash);
+};
+
+const mapProfileToUser = (profile: SupabaseProfile): User => {
+  const role = appRoleFromProfile(profile.role);
+  return {
+    id: stableNumericIdFromUuid(profile.id),
+    supabaseId: profile.id,
+    name: profile.full_name || profile.email,
+    role,
+    points: Number(profile.points || 0),
+    monthlyPointLimit: role === "Foreman" ? 25 : role === "Admin" || role === "Project Manager" ? 999 : 0,
+    email: profile.email,
+    mustSetPassword: false,
+    active: profile.active !== false,
+  };
+};
+
+async function fetchProfilesFromSupabase(): Promise<User[]> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id,email,full_name,role,points,active")
+    .order("full_name", { ascending: true });
+
+  if (error) throw error;
+  return ((data || []) as SupabaseProfile[]).map(mapProfileToUser);
+}
+
 const usersSeed: User[] = [
-  { id: 1, name: "Landis Hiebert", role: "Admin", points: 0, monthlyPointLimit: 999, email: "landis@pjselectric.ca", password: "admin", mustSetPassword: false, active: true },
-  { id: 2, name: "Jason Giesbrecht", role: "Project Manager", points: 0, monthlyPointLimit: 999, email: "jason@pjselectric.ca", password: "temp123", mustSetPassword: true },
-  { id: 3, name: "Riley Pakosh", role: "Foreman", points: 35, monthlyPointLimit: 25, email: "riley@pjselectric.ca", password: "temp123", mustSetPassword: true },
-  { id: 4, name: "Miguel Kehler", role: "Foreman", points: 20, monthlyPointLimit: 25, email: "miguel@pjselectric.ca", password: "temp123", mustSetPassword: true },
-  { id: 5, name: "Kris Sawyer", role: "Crew", points: 15, monthlyPointLimit: 0, email: "kris@pjselectric.ca", password: "temp123", mustSetPassword: true },
-  { id: 6, name: "Jake Turner", role: "Crew", points: 5, monthlyPointLimit: 0, email: "jake@pjselectric.ca", password: "temp123", mustSetPassword: true },
-  { id: 7, name: "Ethan Funk", role: "Crew", points: 0, monthlyPointLimit: 0, email: "ethan@pjselectric.ca", password: "temp123", mustSetPassword: true },
+  {
+    id: 1,
+    name: "Landis Hiebert",
+    role: "Admin",
+    points: 0,
+    monthlyPointLimit: 999,
+    email: "landis@pjselectric.ca",
+    mustSetPassword: false,
+    active: true,
+  },
 ];
 
 const pmTaskList = (completeThrough: number): Task[] => [
@@ -204,149 +226,15 @@ const pmTaskList = (completeThrough: number): Task[] => [
   "As-builts / O&M manuals submitted",
 ].map((title, index) => ({ id: index + 1, title, done: index < completeThrough }));
 
-const initialJobs: Job[] = [
-  {
-    id: 1,
-    jobNumber: "PJ-2026-001",
-    name: "Fort Hope Service / Temp Power",
-    customer: "Penn-co Construction",
-    location: "Fort Hope",
-    status: "Active",
-    certainty: "Confirmed",
-    phase: "Service Installation",
-    risk: "Yellow",
-    startDate: "2026-05-01",
-    finishDate: "2026-06-15",
-    nextAction: "Splice additional 500 MCM cable and bring to volt shack",
-    actionOwner: "Riley Pakosh",
-    actionDue: "2026-05-20",
-    progress: 55,
-    allowedHours: 1200,
-    usedHours: 670,
-    labourBudget: 92000,
-    labourCostToDate: 51400,
-    budget: 185000,
-    costToDate: 91250,
-    crewIds: [3, 4, 5],
-    crewTasks: [
-      { id: 1, title: "Submit daily notes", done: false },
-      { id: 2, title: "Upload progress photos", done: true },
-      { id: 3, title: "Update material list", done: false },
-    ],
-    projectTasks: pmTaskList(7),
-    pmRequests: [
-      { id: 1, title: "Confirm additional 500 MCM splice material — requested by Riley Pakosh", done: false },
-      { id: 2, title: "Send updated next-action direction to site — requested by Kris Sawyer", done: false },
-    ],
-    inspections: [
-      { id: 1, title: "Service inspection", status: "Pending", date: "2026-05-22", notes: "Waiting for Hydro confirmation" },
-      { id: 2, title: "Ground inspection", status: "Scheduled", date: "2026-05-21", notes: "Ground plate photo required" },
-      { id: 3, title: "Final inspection", status: "Not Started", date: "", notes: "After camp tie-in" },
-    ],
-  },
-  {
-    id: 2,
-    jobNumber: "PJ-2026-002",
-    name: "Aroland Elders Lodge",
-    customer: "GC / Owner",
-    location: "Aroland",
-    status: "Active",
-    certainty: "Confirmed",
-    phase: "Commissioning",
-    risk: "Green",
-    startDate: "2026-01-10",
-    finishDate: "2026-06-30",
-    nextAction: "Complete commissioning and closeout documents",
-    actionOwner: "Miguel Kehler",
-    actionDue: "2026-05-24",
-    progress: 82,
-    allowedHours: 2400,
-    usedHours: 1968,
-    labourBudget: 168000,
-    labourCostToDate: 137760,
-    budget: 350000,
-    costToDate: 282000,
-    crewIds: [4, 5],
-    crewTasks: [
-      { id: 1, title: "Panel photos complete", done: true },
-      { id: 2, title: "Submit deficiency notes", done: false },
-    ],
-    projectTasks: pmTaskList(16),
-    pmRequests: [{ id: 1, title: "Review commissioning documents — requested by Miguel Kehler", done: false }],
-    inspections: [
-      { id: 1, title: "Rough-in inspection", status: "Passed", date: "2026-04-02", notes: "No open items" },
-      { id: 2, title: "Final inspection", status: "Pending", date: "2026-05-28", notes: "Book after emergency lights are tested" },
-    ],
-  },
-];
+const initialJobs: Job[] = [];
 
-const initialPotentialJobs: PotentialJob[] = [
-  {
-    id: 1,
-    name: "Potential Summer School Retrofit",
-    customer: "TBD",
-    location: "Manitoba",
-    probability: "Medium",
-    startDate: "2026-06-01",
-    finishDate: "2026-07-15",
-    crewNeeded: 4,
-    estimatedHours: 1200,
-    assumedValue: 175000,
-    crewIds: [],
-    document: "Preliminary drawings.pdf",
-    documents: [{ fileName: "Preliminary drawings.pdf", type: "Document" }],
-    activityLog: [
-      {
-        id: 1,
-        date: "2026-05-22",
-        user: "System",
-        field: "Original Entry",
-        previousValue: "—",
-        newValue: "Initial potential job created",
-      },
-    ],
-  },
-  {
-    id: 2,
-    name: "Northern Camp Expansion",
-    customer: "Penn-co Construction",
-    location: "Northern Manitoba",
-    probability: "High",
-    startDate: "2026-07-01",
-    finishDate: "2026-10-01",
-    crewNeeded: 6,
-    estimatedHours: 2200,
-    assumedValue: 325000,
-    crewIds: [],
-    document: "Tender set.pdf",
-    documents: [{ fileName: "Tender set.pdf", type: "Document" }],
-    activityLog: [
-      {
-        id: 2,
-        date: "2026-05-22",
-        user: "System",
-        field: "Original Entry",
-        previousValue: "—",
-        newValue: "Initial potential job created",
-      },
-    ],
-  },
-];
+const initialPotentialJobs: PotentialJob[] = [];
 
-const initialPoints: PointHistory[] = [
-  { id: 1, userId: 3, awardedById: 1, points: 25, reason: "Stayed late to finish service prep", date: "2026-05-15", jobName: "Fort Hope Service / Temp Power" },
-  { id: 2, userId: 5, awardedById: 3, points: 15, reason: "Kept material organized", date: "2026-05-13", jobName: "Fort Hope Service / Temp Power" },
-  { id: 3, userId: 4, awardedById: 1, points: 20, reason: "Resolved inspection item quickly", date: "2026-05-14", jobName: "Aroland Elders Lodge" },
-];
+const initialPoints: PointHistory[] = [];
 
-const initialDailyReports: DailyReport[] = [
-  { id: 1, jobId: 1, userId: 5, userName: "Kris Sawyer", jobName: "Fort Hope Service / Temp Power", note: "Submitted daily notes and progress photos.", date: "2026-05-13", pointsAwarded: 5, pictures: ["progress-photo-1.jpg"] },
-];
+const initialDailyReports: DailyReport[] = [];
 
-const initialDocuments: JobDocument[] = [
-  { id: 1, jobId: 1, fileName: "volt-shack-progress.jpg", uploadedBy: "Kris Sawyer", uploadedDate: "2026-05-13", type: "Photo" },
-  { id: 2, jobId: 1, fileName: "ground-plate-photo.jpg", uploadedBy: "Riley Pakosh", uploadedDate: "2026-05-14", type: "Photo" },
-];
+const initialDocuments: JobDocument[] = [];
 
 const pct = (used: number, total: number) => Math.max(0, Math.min(100, Math.round((used / Math.max(total, 1)) * 100)));
 const initials = (name: string) => name.split(" ").map((n) => n[0]).join("").slice(0, 2);
@@ -444,21 +332,7 @@ export default function App() {
   const [users, setUsers] = useState<User[]>(usersSeed);
   const [jobs, setJobs] = useState<Job[]>(initialJobs);
   const [potentialJobs, setPotentialJobs] = useState<PotentialJob[]>(initialPotentialJobs);
-  const [smallJobs, setSmallJobs] = useState<SmallJob[]>([
-    {
-      id: 1,
-      title: "Replace parking lot pole light",
-      location: "Steinbach Shop",
-      estimatedDays: 1,
-      estimatedCrew: 2,
-      priority: "Medium",
-      scope: "Replace damaged pole light fixture and reconnect controls.",
-      documents: [],
-      status: "Planning",
-      enteredDate: new Date().toISOString().slice(0, 10),
-      scheduled: false,
-    },
-  ]);
+  const [smallJobs, setSmallJobs] = useState<SmallJob[]>([]);
   const [points, setPoints] = useState<PointHistory[]>(initialPoints);
   const [dailyReports, setDailyReports] = useState<DailyReport[]>(initialDailyReports);
   const [documents, setDocuments] = useState<JobDocument[]>(initialDocuments);
@@ -472,33 +346,86 @@ export default function App() {
   const [passwordSetupUserId, setPasswordSetupUserId] = useState<number | null>(null);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      const email = data.session?.user?.email?.toLowerCase();
-      if (!email) return;
-      const existingUser = users.find((user) => (user.email || "").toLowerCase() === email);
-      if (existingUser) {
-        setCurrentUserId(existingUser.id);
-        setIsLoggedIn(true);
-      }
-    });
+    let cancelled = false;
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      const email = session?.user?.email?.toLowerCase();
+    const loadProfiles = async () => {
+      try {
+        const liveUsers = await fetchProfilesFromSupabase();
+        if (!cancelled && liveUsers.length > 0) {
+          setUsers(liveUsers);
+        }
+      } catch (error) {
+        console.error("Error loading profiles:", error);
+      }
+    };
+
+    loadProfiles();
+
+    const channel = supabase
+      .channel("jobflow-profiles-live")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "profiles" },
+        () => {
+          loadProfiles();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  useEffect(() => {
+    const applySession = async (emailValue?: string | null) => {
+      const email = emailValue?.toLowerCase();
       if (!email) {
         setIsLoggedIn(false);
         return;
       }
-      const existingUser = users.find((user) => (user.email || "").toLowerCase() === email);
-      if (existingUser) {
+
+      let existingUser = users.find((user) => (user.email || "").toLowerCase() === email);
+
+      if (!existingUser) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("id,email,full_name,role,points,active")
+          .eq("email", email)
+          .maybeSingle<SupabaseProfile>();
+
+        if (profile) {
+          existingUser = mapProfileToUser(profile);
+          setUsers((current) => {
+            const withoutDuplicate = current.filter((user) => user.supabaseId !== existingUser!.supabaseId);
+            return [...withoutDuplicate, existingUser!];
+          });
+        }
+      }
+
+      if (existingUser && existingUser.active !== false) {
         setCurrentUserId(existingUser.id);
         setIsLoggedIn(true);
+      } else {
+        setIsLoggedIn(false);
       }
+    };
+
+    supabase.auth.getSession().then(({ data }) => {
+      applySession(data.session?.user?.email);
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      applySession(session?.user?.email);
     });
 
     return () => listener.subscription.unsubscribe();
   }, [users]);
 
   useEffect(() => {
+    let cancelled = false;
+
     async function loadJobs() {
       const { data, error } = await supabase
         .from("jobs")
@@ -511,14 +438,34 @@ export default function App() {
       }
 
       const mappedJobs = (data || []).map(mapSupabaseJob);
-      setJobs(mappedJobs);
+      if (cancelled) return;
 
-      if (mappedJobs.length > 0) {
-        setSelectedId(mappedJobs[0].id);
-      }
+      setJobs(mappedJobs);
+      setSelectedId((currentSelected) => {
+        if (mappedJobs.some((job) => job.id === currentSelected)) return currentSelected;
+        return mappedJobs[0]?.id || 0;
+      });
     }
 
-    if (isLoggedIn) loadJobs();
+    if (!isLoggedIn) return;
+
+    loadJobs();
+
+    const channel = supabase
+      .channel("jobflow-jobs-live")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "jobs" },
+        () => {
+          loadJobs();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
   }, [isLoggedIn]);
   const [showSettings, setShowSettings] = useState(false);
   const [showAddJob, setShowAddJob] = useState(false);
@@ -1041,22 +988,17 @@ function Sidebar({ activeView, setActiveView, user, isAdmin, onAddJob, onOpenSet
     <aside style={styles.sidebar}>
       <div style={styles.logo}>PJ&apos;S<br />ELECTRIC</div>
       <h2 style={styles.sidebarTitle}>PJ&apos;S ELECTRIC</h2>
-
       <SideButton active={activeView === "dashboard"} icon={<LayoutDashboard size={18} />} label="Jobs" onClick={() => setActiveView("dashboard")} />
+      <SideButton active={activeView === "planning"} icon={<BriefcaseBusiness size={18} />} label="Planning" onClick={() => setActiveView("planning")} />
+      <SideButton active={activeView === "reports"} icon={<FileText size={18} />} label="Reports" onClick={() => setActiveView("reports")} />
+      <SideButton active={activeView === "crewTasks"} icon={<CheckSquare size={18} />} label="Crew Tasks" onClick={() => setActiveView("crewTasks")} />
+      <SideButton active={activeView === "inspections"} icon={<ClipboardCheck size={18} />} label="Inspections" onClick={() => setActiveView("inspections")} />
+      <SideButton active={activeView === "timeTracking"} icon={<Timer size={18} />} label="Time Tracking" onClick={() => setActiveView("timeTracking")} />
+      <SideButton active={activeView === "labourTracking"} icon={<BarChart3 size={18} />} label="Labour Tracking" onClick={() => setActiveView("labourTracking")} />
       <SideButton active={activeView === "calendar"} icon={<CalendarClock size={18} />} label="Calendar" onClick={() => setActiveView("calendar")} />
-
-      {isAdmin && (
-        <SideButton active={activeView === "smallJobs"} icon={<ClipboardList size={18} />} label="Jobs To Do" onClick={() => setActiveView("smallJobs")} />
-      )}
-
-      {isAdmin && (
-        <SideButton icon={<Plus size={18} />} label="Add Job" onClick={onAddJob} />
-      )}
-
-      {isAdmin && (
-        <SideButton active={activeView === "potentialJobs"} icon={<BriefcaseBusiness size={18} />} label="Potential Jobs" onClick={() => setActiveView("potentialJobs")} />
-      )}
-
+      {isAdmin && <SideButton active={activeView === "smallJobs"} icon={<ClipboardList size={18} />} label="Jobs To Do" onClick={() => setActiveView("smallJobs")} />}
+      {isAdmin && <SideButton icon={<Plus size={18} />} label="Add Job" onClick={onAddJob} />}
+      {isAdmin && <SideButton active={activeView === "potentialJobs"} icon={<BriefcaseBusiness size={18} />} label="Potential Jobs" onClick={() => setActiveView("potentialJobs")} />}
       <SideButton active={activeView === "crewPoints"} icon={<Users size={18} />} label="Crew Points" onClick={() => setActiveView("crewPoints")} />
       <SideButton icon={<Settings size={18} />} label="Settings" onClick={onOpenSettings} />
 
@@ -1069,16 +1011,7 @@ function Sidebar({ activeView, setActiveView, user, isAdmin, onAddJob, onOpenSet
             {user.role === "Crew" && <b>{user.points} pts</b>}
           </div>
         </div>
-
-        <button
-          style={styles.signOut}
-          onClick={async () => {
-            await supabase.auth.signOut();
-            onSignOut();
-          }}
-        >
-          <LogOut size={16} /> Sign Out
-        </button>
+        <button style={styles.signOut} onClick={async () => { await supabase.auth.signOut(); onSignOut(); }}><LogOut size={16} /> Sign Out</button>
       </div>
     </aside>
   );
@@ -2606,21 +2539,25 @@ async function addUser() {
         role,
       });
 
-      setUsers([
-        ...users,
-        {
-          id: Date.now(),
-          supabaseId: authUser.id,
-          name: cleanName,
-          role,
-          points: 0,
-          monthlyPointLimit: role === "Foreman" ? monthlyPointLimit : 0,
-          email: cleanEmail,
-          password: cleanPassword,
-          mustSetPassword: true,
-          active: true,
-        },
-      ]);
+      try {
+        const liveUsers = await fetchProfilesFromSupabase();
+        setUsers(liveUsers);
+      } catch {
+        setUsers([
+          ...users,
+          {
+            id: stableNumericIdFromUuid(authUser.id),
+            supabaseId: authUser.id,
+            name: cleanName,
+            role,
+            points: 0,
+            monthlyPointLimit: role === "Foreman" ? monthlyPointLimit : 0,
+            email: cleanEmail,
+            mustSetPassword: false,
+            active: true,
+          },
+        ]);
+      }
 
       setName("");
       setEmail("");
